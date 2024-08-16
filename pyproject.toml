@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "antenna-pattern"
+version = "0.1.0"
+description = "visualize 3d antenna pattern"
+authors = ["daiyabarus <debu69er@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+streamlit = "^1.37.1"
+plotly = "^5.23.0"
+numpy = "^2.0.1"
+mesop = "^0.12.0"
+
+[tool.poetry.group.dev.dependencies]
+streamlit = "^1.37.1"
+matplotlib = "^3.9.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
