@@ -129,24 +129,23 @@ def create_3d_chart(
     Y = (max_gain - R_adjusted) * np.sin(PHI) * np.sin(THETA)
     Z = (max_gain - R_adjusted) * np.cos(PHI)
 
-    points = np.column_stack((X.flatten(), Y.flatten(), Z.flatten()))
-    grid = pv.PolyData(points)
+    grid = pv.StructuredGrid(X, Y, Z)
 
-    attenuation = (max_gain - R_adjusted).flatten()
+    attenuation = (max_gain - R_adjusted).flatten(order="F")
     grid["attenuation"] = attenuation
 
-    plotter = pv.Plotter(shape=(1, 2), window_size=[800, 800])
+    plotter = pv.Plotter(window_size=[800, 800])
 
     plotter.add_mesh(
         grid,
-        style="surface",
         scalars="attenuation",
         cmap=["red", "yellow", "green", "blue"],
         show_scalar_bar=True,
         smooth_shading=True,
-        point_size=15,
-        show_edges=True,
+        show_edges=False,
+        pbr=True,
     )
+
     plotter.view_isometric()
     plotter.background_color = "white"
 
@@ -193,7 +192,7 @@ def create_3d_chart_plotly(
                     (0.65, "yellow"),
                     (1, "red"),
                 ],
-                colorbar=dict(title="Attenuation (dB)"),
+                showscale=False,  # Remove the colorbar (legend)
                 hovertemplate="X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<br>Gain: %{surfacecolor:.2f} dBi<extra></extra>",
             )
         ]
@@ -201,15 +200,14 @@ def create_3d_chart_plotly(
 
     fig.update_layout(
         scene=dict(
-            xaxis_title="X",
-            yaxis_title="Y",
-            zaxis_title="Z",
             aspectmode="data",
+            xaxis=dict(showgrid=False, showticklabels=False, title=""),
+            yaxis=dict(showgrid=False, showticklabels=False, title=""),
+            zaxis=dict(showgrid=False, showticklabels=False, title=""),
         ),
-        autosize=False,
         width=800,
         height=800,
-        margin=dict(l=65, r=50, b=65, t=90),
+        margin=dict(l=0, r=0, b=0, t=0),  # Remove the margins
     )
 
     return fig
@@ -272,7 +270,9 @@ def main():
             and "Max Frequency (MHz)" in df.columns
         ):
             comments = df["Comments"].unique()
-            selected_comment = st.selectbox("Select Ant Type", comments)
+            selected_comment = st.selectbox(
+                "Select Ant Type", comments, key="selectbox_key"
+            )
 
             selected_row = df[df["Comments"] == selected_comment].iloc[0]
             horizontal_pattern, vertical_pattern = extract_pattern(
@@ -293,7 +293,10 @@ def main():
 
                 default_power = extract_tx_power(selected_row["Comments"])
                 power_adjustment = st.number_input(
-                    "Tx Power (dBm)", value=default_power, step=0.1
+                    "Tx Power (dBm)",
+                    value=default_power,
+                    step=0.1,
+                    key="power_adjustment_key",
                 )
 
                 adjusted_gain = float(selected_row["Gain (dBi)"]) + (
@@ -319,7 +322,7 @@ def main():
                 with col1:
                     st.subheader("3D Antenna Pattern using PyVista")
                     plotter = create_3d_chart(pattern, power_adjustment, default_power)
-                    stpyvista(plotter, key="antenna_pattern")
+                    stpyvista(plotter, key="antenna_pattern_key")
 
                 with col2:
                     st.subheader("3D Antenna Pattern using Plotly")
@@ -328,15 +331,14 @@ def main():
                     )
                     st.plotly_chart(fig_3d, use_container_width=True)
 
+                # Display antenna characteristics as before
                 st.subheader("Antenna Characteristics")
                 st.write(f"Name: {selected_row['Name']}")
                 st.write(f"Gain: {selected_row['Gain (dBi)']} dBi")
                 st.write(f"Default Tx Power: {default_power:.2f} dBm")
                 st.write(f"Adjusted Tx Power: {power_adjustment:.2f} dBm")
                 st.write(f"Power Adjustment: {power_adjustment - default_power:.2f} dB")
-                st.write(
-                    f"Adjusted Gain: {float(selected_row['Gain (dBi)']) + (power_adjustment - default_power):.2f} dBi"
-                )
+                st.write(f"Adjusted Gain: {adjusted_gain:.2f} dBi")
                 st.write(f"Manufacturer: {selected_row['Manufacturer']}")
                 st.write(
                     f"Pattern Electrical Tilt: {selected_row['Pattern Electrical Tilt (°)']}°"
