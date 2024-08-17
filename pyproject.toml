@@ -12,6 +12,9 @@ streamlit = "^1.37.1"
 plotly = "^5.23.0"
 numpy = "^2.0.1"
 mesop = "^0.12.0"
+pyvista = "^0.44.1"
+stpyvista = "^0.0.19"
+pymeshfix = "^0.17.0"
 
 [tool.poetry.group.dev.dependencies]
 streamlit = "^1.37.1"

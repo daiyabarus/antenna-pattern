@@ -4,7 +4,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import pyvista as pv
 import streamlit as st
+from stpyvista import stpyvista
 
 
 @dataclass
@@ -106,6 +108,53 @@ def extract_antenna_parameters(comment: str) -> dict[str, float]:
 
 def create_3d_chart(
     pattern: AntennaPattern, power_adjustment: float, default_power: float
+):
+    theta = np.radians(np.linspace(0, 360, 361))
+    phi = np.radians(np.linspace(0, 180, 181))
+    THETA, PHI = np.meshgrid(theta, phi)
+
+    h_angles = np.radians(pattern.horizontal["angle"].values)
+    h_gain = pattern.horizontal["Att dB"].values
+    v_angles = np.radians(pattern.vertical["angle"].values)
+    v_gain = pattern.vertical["Att dB"].values
+
+    h_gain_interp = np.interp(theta, h_angles, h_gain, period=2 * np.pi)
+    v_gain_interp = np.interp(phi, v_angles, v_gain)
+
+    R = np.outer(v_gain_interp, h_gain_interp)
+    R_adjusted = R - (power_adjustment - default_power)
+    max_gain = pattern.gain + (power_adjustment - default_power)
+
+    X = (max_gain - R_adjusted) * np.sin(PHI) * np.cos(THETA)
+    Y = (max_gain - R_adjusted) * np.sin(PHI) * np.sin(THETA)
+    Z = (max_gain - R_adjusted) * np.cos(PHI)
+
+    points = np.column_stack((X.flatten(), Y.flatten(), Z.flatten()))
+    grid = pv.PolyData(points)
+
+    attenuation = (max_gain - R_adjusted).flatten()
+    grid["attenuation"] = attenuation
+
+    plotter = pv.Plotter(shape=(1, 2), window_size=[800, 800])
+
+    plotter.add_mesh(
+        grid,
+        style="surface",
+        scalars="attenuation",
+        cmap=["red", "yellow", "green", "blue"],
+        show_scalar_bar=True,
+        smooth_shading=True,
+        point_size=15,
+        show_edges=True,
+    )
+    plotter.view_isometric()
+    plotter.background_color = "white"
+
+    return plotter
+
+
+def create_3d_chart_plotly(
+    pattern: AntennaPattern, power_adjustment: float, default_power: float
 ) -> go.Figure:
     theta = np.radians(np.linspace(0, 360, 361))
     phi = np.radians(np.linspace(0, 180, 181))
@@ -139,12 +188,10 @@ def create_3d_chart(
                 z=Z,
                 surfacecolor=R_norm,
                 colorscale=[
-                    (0, "rgb(15, 245, 22)"),  # Green
-                    (0.2, "rgb(126, 245, 15)"),  # Light green
-                    (0.4, "rgb(247, 243, 15)"),  # Yellow
-                    (0.6, "rgb(245, 162, 15)"),  # Orange
-                    (0.8, "rgb(245, 84, 5)"),  # Light red
-                    (1, "rgb(245, 5, 5)"),  # Red
+                    (0, "blue"),
+                    (0.35, "green"),
+                    (0.65, "yellow"),
+                    (1, "red"),
                 ],
                 colorbar=dict(title="Attenuation (dB)"),
                 hovertemplate="X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<br>Gain: %{surfacecolor:.2f} dBi<extra></extra>",
@@ -153,17 +200,15 @@ def create_3d_chart(
     )
 
     fig.update_layout(
-        title=f"3D Antenna Pattern (Power: {power_adjustment:.2f} dBm, Adjustment: {power_adjustment - default_power:.2f} dB)",
         scene=dict(
             xaxis_title="X",
             yaxis_title="Y",
             zaxis_title="Z",
             aspectmode="data",
-            camera=dict(eye=dict(x=1.8, y=-1.8, z=0.8), up=dict(x=0, y=0, z=1)),
         ),
         autosize=False,
-        width=700,
-        height=700,
+        width=800,
+        height=800,
         margin=dict(l=65, r=50, b=65, t=90),
     )
 
@@ -216,9 +261,7 @@ def create_polar_chart(
 
 
 def main():
-    st.set_page_config(
-        layout="wide",
-    )
+    st.set_page_config(layout="wide")
     uploaded_file = st.file_uploader("Choose Antenna Pattern file", type="txt")
     if uploaded_file is not None:
         df = split_txt_file(uploaded_file)
@@ -257,7 +300,7 @@ def main():
                     power_adjustment - default_power
                 )
 
-                col1, col2, col3 = st.columns(3)
+                col1, col2 = st.columns(2)
                 with col1:
                     st.subheader("Horizontal Pattern")
                     fig_h = create_polar_chart(
@@ -272,12 +315,17 @@ def main():
                     )
                     st.plotly_chart(fig_v, use_container_width=True)
 
-                st.subheader("3D Antenna Pattern")
-                fig_3d = create_3d_chart(pattern, power_adjustment, default_power)
-                st.plotly_chart(fig_3d, use_container_width=True)
-                with col3:
-                    st.subheader("3D Antenna Pattern")
-                    fig_3d = create_3d_chart(pattern, power_adjustment, default_power)
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("3D Antenna Pattern using PyVista")
+                    plotter = create_3d_chart(pattern, power_adjustment, default_power)
+                    stpyvista(plotter, key="antenna_pattern")
+
+                with col2:
+                    st.subheader("3D Antenna Pattern using Plotly")
+                    fig_3d = create_3d_chart_plotly(
+                        pattern, power_adjustment, default_power
+                    )
                     st.plotly_chart(fig_3d, use_container_width=True)
 
                 st.subheader("Antenna Characteristics")
