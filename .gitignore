@@ -55,9 +55,11 @@ test1.py
 test2.py
 test3.py
 test*.*
+test/
 # Translations
 *.mo
 *.pot
+3d/
 
 # Django stuff:
 *.log
