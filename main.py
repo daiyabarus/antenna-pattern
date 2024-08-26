@@ -7,7 +7,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import pyvista as pv
 import streamlit as st
-from stpyvista import stpyvista
 
 from styles import styling
 
@@ -323,10 +322,11 @@ def main():
                         )
                     )
                     plotter = create_3d_chart(pattern, power_adjustment, default_power)
-                    stpyvista(
-                        plotter,
-                        key=f"antenna_pattern_{selected_comment}_{default_power}",
-                    )
+                    plotter.show()
+                    # stpyvista(
+                    #     plotter,
+                    #     key=f"antenna_pattern_{selected_comment}_{default_power}",
+                    # )
             else:
                 st.error("Could not extract pattern data for the selected comment.")
         else:
