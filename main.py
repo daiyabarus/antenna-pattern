@@ -8,8 +8,14 @@ import plotly.graph_objects as go
 import pyvista as pv
 import streamlit as st
 from stpyvista import stpyvista
+from stpyvista.utils import is_the_app_embedded, start_xvfb
 
 from styles import styling
+
+start_xvfb()
+st.session_state.is_app_embedded = st.session_state.get(
+    "is_app_embedded", is_the_app_embedded()
+)
 
 
 @dataclass
