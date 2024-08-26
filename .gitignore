@@ -62,7 +62,8 @@ test/
 *.mo
 *.pot
 3d/
-
+poetry.lock
+pyproject.toml
 # Django stuff:
 *.log
 local_settings.py
