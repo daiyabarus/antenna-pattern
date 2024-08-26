@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import pyvista as pv
 import streamlit as st
+from stpyvista import stpyvista
 
 from styles import styling
 
@@ -114,7 +115,7 @@ def extract_antenna_parameters(comment: str) -> dict[str, float]:
 @st.cache_resource
 def create_3d_chart(
     pattern: AntennaPattern, power_adjustment: float, default_power: float
-) -> pv.Plotter:
+):
     """Create a 3D antenna pattern chart using PyVista."""
     theta = np.radians(np.linspace(0, 360, 361))
     phi = np.radians(np.linspace(0, 180, 181))
@@ -140,7 +141,7 @@ def create_3d_chart(
     attenuation = (max_gain - R_adjusted).flatten(order="F")
     grid["attenuation"] = attenuation
 
-    plotter = pv.Plotter(window_size=[800, 800])
+    plotter = pv.Plotter()
     plotter.add_mesh(
         grid,
         scalars="attenuation",
@@ -322,11 +323,11 @@ def main():
                         )
                     )
                     plotter = create_3d_chart(pattern, power_adjustment, default_power)
-                    plotter.show()
-                    # stpyvista(
-                    #     plotter,
-                    #     key=f"antenna_pattern_{selected_comment}_{default_power}",
-                    # )
+                    # plotter.show()
+                    stpyvista(
+                        plotter,
+                        key=f"antenna_pattern_{selected_comment}_{default_power}",
+                    )
             else:
                 st.error("Could not extract pattern data for the selected comment.")
         else:
