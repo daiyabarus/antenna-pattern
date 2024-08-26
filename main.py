@@ -1,3 +1,4 @@
+import os
 import re
 from dataclasses import dataclass
 
@@ -7,6 +8,8 @@ import plotly.graph_objects as go
 import pyvista as pv
 import streamlit as st
 from stpyvista import stpyvista
+
+from styles import styling
 
 
 @dataclass
@@ -28,12 +31,14 @@ class AntennaPattern:
         self.wavelength = 3e8 / (self.frequency * 1e6)
 
 
-def split_txt_file(uploaded_file):
+def decode_file_content(file_path: str) -> pd.DataFrame | None:
+    """Decode the file content from the provided file path with multiple encodings."""
     encodings = ["utf-8", "iso-8859-1", "windows-1252"]
 
     def try_decode(encoding):
         try:
-            content = uploaded_file.getvalue().decode(encoding)
+            with open(file_path, encoding=encoding) as file:
+                content = file.read()
             lines = content.split("\n")
             headers = lines[0].strip().split("\t")
             return pd.DataFrame(
@@ -46,18 +51,17 @@ def split_txt_file(uploaded_file):
         except UnicodeDecodeError:
             return None
 
-    df = next((df for df in map(try_decode, encodings) if df is not None), None)
-    if df is None:
-        st.error("Unable to decode the file. Please check the file encoding.")
-    return df
+    return next((df for df in map(try_decode, encodings) if df is not None), None)
 
 
 def extract_pattern(pattern_text: str) -> tuple[str | None, str | None]:
+    """Extract horizontal and vertical patterns from the pattern text."""
     matches = re.findall(r"(?<=360\s)(.*?\s+359\s+\d+\.\d+)", pattern_text)
     return (matches[0], matches[1]) if len(matches) >= 2 else (None, None)
 
 
 def extract_tx_power(comment: str) -> float:
+    """Extract transmission power from the comment string."""
     power_match = re.search(r"Tx Power=(\d+)x(\d+)\s*dBm", comment)
     if power_match:
         num_channels = int(power_match.group(1))
@@ -68,6 +72,7 @@ def extract_tx_power(comment: str) -> float:
 
 
 def transpose_pattern(pattern_text: str) -> pd.DataFrame:
+    """Transpose the pattern text into a pandas DataFrame."""
     values = pattern_text.strip().split()
     return pd.DataFrame(
         {
@@ -78,6 +83,7 @@ def transpose_pattern(pattern_text: str) -> pd.DataFrame:
 
 
 def extract_antenna_parameters(comment: str) -> dict[str, float]:
+    """Extract antenna parameters from the comment string."""
     params = {
         "h_beamwidth": 0,
         "v_beamwidth": 0,
@@ -106,9 +112,11 @@ def extract_antenna_parameters(comment: str) -> dict[str, float]:
     return params
 
 
+@st.cache_resource
 def create_3d_chart(
     pattern: AntennaPattern, power_adjustment: float, default_power: float
-):
+) -> pv.Plotter:
+    """Create a 3D antenna pattern chart using PyVista."""
     theta = np.radians(np.linspace(0, 360, 361))
     phi = np.radians(np.linspace(0, 180, 181))
     THETA, PHI = np.meshgrid(theta, phi)
@@ -130,12 +138,10 @@ def create_3d_chart(
     Z = (max_gain - R_adjusted) * np.cos(PHI)
 
     grid = pv.StructuredGrid(X, Y, Z)
-
     attenuation = (max_gain - R_adjusted).flatten(order="F")
     grid["attenuation"] = attenuation
 
     plotter = pv.Plotter(window_size=[800, 800])
-
     plotter.add_mesh(
         grid,
         scalars="attenuation",
@@ -143,81 +149,17 @@ def create_3d_chart(
         show_scalar_bar=True,
         smooth_shading=True,
         show_edges=False,
-        pbr=True,
     )
 
-    plotter.view_isometric()
     plotter.background_color = "white"
-
+    plotter.view_isometric()
     return plotter
 
 
-def create_3d_chart_plotly(
-    pattern: AntennaPattern, power_adjustment: float, default_power: float
-) -> go.Figure:
-    theta = np.radians(np.linspace(0, 360, 361))
-    phi = np.radians(np.linspace(0, 180, 181))
-    THETA, PHI = np.meshgrid(theta, phi)
-
-    h_angles = np.radians(pattern.horizontal["angle"].values)
-    h_gain = pattern.horizontal["Att dB"].values
-    v_angles = np.radians(pattern.vertical["angle"].values)
-    v_gain = pattern.vertical["Att dB"].values
-
-    h_gain_interp = np.interp(theta, h_angles, h_gain, period=2 * np.pi)
-    v_gain_interp = np.interp(phi, v_angles, v_gain)
-
-    R = np.outer(v_gain_interp, h_gain_interp)
-    R_adjusted = R - (power_adjustment - default_power)
-    R_norm = (R_adjusted - R_adjusted.min()) / (R_adjusted.max() - R_adjusted.min())
-
-    max_gain = pattern.gain + (power_adjustment - default_power)
-    X = (max_gain - R_adjusted) * np.sin(PHI) * np.cos(THETA)
-    Y = (max_gain - R_adjusted) * np.sin(PHI) * np.sin(THETA)
-    Z = (max_gain - R_adjusted) * np.cos(PHI)
-
-    # Calculate dBi values
-    dBi_values = max_gain - R_adjusted
-
-    fig = go.Figure(
-        data=[
-            go.Surface(
-                x=X,
-                y=Y,
-                z=Z,
-                surfacecolor=R_norm,
-                colorscale=[
-                    (0, "blue"),
-                    (0.35, "green"),
-                    (0.65, "yellow"),
-                    (1, "red"),
-                ],
-                showscale=False,  # Remove the colorbar (legend)
-                hovertemplate="X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<br>Gain: %{surfacecolor:.2f} dBi<extra></extra>",
-            )
-        ]
-    )
-
-    fig.update_layout(
-        scene=dict(
-            aspectmode="data",
-            xaxis=dict(showgrid=False, showticklabels=False, title=""),
-            yaxis=dict(showgrid=False, showticklabels=False, title=""),
-            zaxis=dict(showgrid=False, showticklabels=False, title=""),
-        ),
-        width=800,
-        height=800,
-        margin=dict(l=0, r=0, b=0, t=0),  # Remove the margins
-    )
-
-    return fig
-
-
-def create_polar_chart(
-    df: pd.DataFrame, title: str, color: str, max_gain: float
-) -> go.Figure:
+def create_polar_chart(df: pd.DataFrame, color: str, max_gain: float) -> go.Figure:
+    """Create a polar chart using Plotly for the antenna pattern."""
     gain = -df["Att dB"]
-    dBi_values = max_gain + gain  # Calculate dBi values
+    dBi_values = max_gain + gain
 
     fig = go.Figure()
     fig.add_trace(
@@ -228,12 +170,11 @@ def create_polar_chart(
             name="Antenna Pattern",
             line=dict(color=color, width=2),
             hovertemplate="Angle: %{theta:.2f}°<br>Attenuation: %{r:.2f} dB<br>Gain: %{text:.2f} dBi<extra></extra>",
-            text=dBi_values,  # Add dBi values for hover information
+            text=dBi_values,
         )
     )
 
     fig.update_layout(
-        title=title,
         polar=dict(
             radialaxis=dict(
                 visible=True,
@@ -259,19 +200,19 @@ def create_polar_chart(
 
 
 def main():
-    st.set_page_config(layout="wide")
+    st.set_page_config(
+        page_title="Antenna Pattern",
+        layout="wide",
+        page_icon="🧊",
+    )
 
+    # Define the path to the fixed file
+    script_dir = os.path.dirname(__file__)
+    fixed_file_path = os.path.join(script_dir, "AIR6488.txt")
+
+    # Load and cache the file content
     if "df" not in st.session_state:
-        st.session_state.df = None
-    if "selected_comment" not in st.session_state:
-        st.session_state.selected_comment = None
-    if "power_adjustment" not in st.session_state:
-        st.session_state.power_adjustment = None
-
-    uploaded_file = st.file_uploader("Choose Antenna Pattern file", type="txt")
-
-    if uploaded_file is not None:
-        st.session_state.df = split_txt_file(uploaded_file)
+        st.session_state.df = decode_file_content(fixed_file_path)
 
     if st.session_state.df is not None:
         if (
@@ -280,13 +221,8 @@ def main():
         ):
             comments = st.session_state.df["Comments"].unique()
             selected_comment = st.selectbox(
-                "Select Ant Type", comments, key="antenna_select"
+                "Select Ant Type", comments, key="selected_comment"
             )
-
-            if selected_comment != st.session_state.selected_comment:
-                st.session_state.selected_comment = selected_comment
-                st.session_state.power_adjustment = None
-                st.rerun()
 
             selected_row = st.session_state.df[
                 st.session_state.df["Comments"] == selected_comment
@@ -310,7 +246,6 @@ def main():
 
                 default_power = extract_tx_power(selected_row["Comments"])
 
-                # Use default_power as the initial value
                 power_adjustment = st.number_input(
                     "Tx Power (dBm)",
                     value=default_power,
@@ -318,80 +253,83 @@ def main():
                     key="power_adjustment",
                 )
 
-                if power_adjustment != st.session_state.power_adjustment:
-                    st.session_state.power_adjustment = power_adjustment
-                    st.rerun()
-
-                # Only proceed if power_adjustment has been set by the user
-                if st.session_state.power_adjustment is not None:
+                if power_adjustment is not None:
                     power_diff = power_adjustment - default_power
                     adjusted_gain = float(selected_row["Gain (dBi)"]) + power_diff
 
-                    col1, col2 = st.columns(2)
+                    col1, col2, col3 = st.columns(3)
+                    st.markdown("#")
                     with col1:
-                        st.subheader("Horizontal Pattern")
+                        st.markdown(
+                            *styling(
+                                "Horizontal Pattern",
+                                tag="h6",
+                                font_size=18,
+                                text_align="center",
+                            )
+                        )
                         fig_h = create_polar_chart(
                             pattern.horizontal,
-                            "Horizontal Pattern",
                             "red",
                             adjusted_gain,
                         )
                         st.plotly_chart(fig_h, use_container_width=True)
 
                     with col2:
-                        st.subheader("Vertical Pattern")
+                        st.markdown(
+                            *styling(
+                                "Vertical Pattern",
+                                tag="h6",
+                                font_size=18,
+                                text_align="center",
+                            )
+                        )
                         fig_v = create_polar_chart(
-                            pattern.vertical, "Vertical Pattern", "green", adjusted_gain
+                            pattern.vertical, "green", adjusted_gain
                         )
                         st.plotly_chart(fig_v, use_container_width=True)
 
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.subheader("3D Antenna Pattern using PyVista")
-                        plotter = create_3d_chart(
-                            pattern, power_adjustment, default_power
+                    with col3:
+                        st.markdown(
+                            *styling(
+                                "Antenna Data",
+                                tag="h6",
+                                font_size=18,
+                                text_align="center",
+                            )
                         )
-                        stpyvista(
-                            plotter,
-                            key=f"antenna_pattern_{selected_comment}_{default_power}",
+                        table_data = f"""
+                        | **Parameter**                    | **Value**                                                        |
+                        |:---------------------------------|:-----------------------------------------------------------------|
+                        | **Name**                         | {selected_row['Name']}                                           |
+                        | **Gain**                         | {selected_row['Gain (dBi)']} dBi                                 |
+                        | **Tx Power**                     | {power_adjustment:.2f} dBm                                       |
+                        | **Adjusted Gain**                | {adjusted_gain:.2f} dBi                                          |
+                        | **Pattern Electrical Tilt**      | {selected_row['Pattern Electrical Tilt (°)']}°                   |
+                        | **Half-power Beamwidth**         | {selected_row['Half-power Beamwidth']}°                          |
+                        | **Frequency Range**              | {selected_row['Min Frequency (MHz)']} - {selected_row['Max Frequency (MHz)']} MHz |
+                        | **Pattern Electrical Azimuth**   | {selected_row['Pattern Electrical Azimuth (°)']}°                |
+                        | **Remark**                       | {selected_row['Comments']}                                       |
+                        """
+                        st.markdown(table_data)
+
+                    st.markdown("#")
+                    st.markdown(
+                        *styling(
+                            "🗼 3D Antenna Pattern",
+                            tag="h5",
+                            font_size=32,
+                            text_align="center",
                         )
-
-                    with col2:
-                        st.subheader("3D Antenna Pattern using Plotly")
-                        fig_3d = create_3d_chart_plotly(
-                            pattern, power_adjustment, default_power
-                        )
-                        st.plotly_chart(fig_3d, use_container_width=True)
-
-                    st.subheader("Antenna Characteristics")
-                    st.write(f"Name: {selected_row['Name']}")
-                    st.write(f"Gain: {selected_row['Gain (dBi)']} dBi")
-                    st.write(f"Default Tx Power: {default_power:.2f} dBm")
-                    st.write(f"Adjusted Tx Power: {power_adjustment:.2f} dBm")
-                    st.write(f"Power Adjustment: {power_diff:.2f} dB")
-                    st.write(f"Adjusted Gain: {adjusted_gain:.2f} dBi")
-                    st.write(f"Manufacturer: {selected_row['Manufacturer']}")
-                    st.write(
-                        f"Pattern Electrical Tilt: {selected_row['Pattern Electrical Tilt (°)']}°"
                     )
-                    st.write(
-                        f"Half-power Beamwidth: {selected_row['Half-power Beamwidth']}°"
+                    plotter = create_3d_chart(pattern, power_adjustment, default_power)
+                    stpyvista(
+                        plotter,
+                        key=f"antenna_pattern_{selected_comment}_{default_power}",
                     )
-                    st.write(
-                        f"Frequency Range: {selected_row['Min Frequency (MHz)']} - {selected_row['Max Frequency (MHz)']} MHz"
-                    )
-                    st.write(
-                        f"Pattern Electrical Azimuth: {selected_row['Pattern Electrical Azimuth (°)']}°"
-                    )
-                    st.write(f"Comments: {selected_row['Comments']}")
-                else:
-                    st.info(
-                        "Please adjust the Tx Power to see the antenna patterns and characteristics."
-                    )
-
             else:
                 st.error("Could not extract pattern data for the selected comment.")
-        elif st.session_state.df is not None:
+        else:
             st.error(
                 'The uploaded file does not contain the expected "Comments" or "Max Frequency (MHz)" column.'
             )
