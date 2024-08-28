@@ -1,12 +1,13 @@
 import colorsys
-import os
 import re
 from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pyvista as pv
 import streamlit as st
+from stpyvista import stpyvista
 
 
 @dataclass
@@ -103,6 +104,141 @@ def extract_antenna_parameters(comment: str) -> dict[str, float]:
     return params
 
 
+# TODOs:  3D
+@st.cache_resource
+def create_3d_chart(
+    pattern: AntennaPattern, power_adjustment: float, default_power: float
+) -> pv.Plotter:
+    """Create a 3D antenna pattern chart using PyVista with polar coordinates."""
+    # Define the theta and phi angles in radians
+    theta = np.radians(np.linspace(0, 360, 361))  # azimuth angle
+    phi = np.radians(np.linspace(0, 180, 181))  # elevation angle
+    # Create a meshgrid for the theta and phi angles
+    THETA, PHI = np.meshgrid(theta, phi)
+    # Convert the horizontal and vertical pattern data to radians and extract gain
+    h_angles = np.radians(pattern.horizontal["angle"].values)
+    h_gain = pattern.horizontal["Att dB"].values
+    v_angles = np.radians(pattern.vertical["angle"].values)
+    v_gain = pattern.vertical["Att dB"].values
+    # Interpolate the gains across the theta and phi angles
+    h_gain_interp = np.interp(theta, h_angles, h_gain, period=2 * np.pi)
+    v_gain_interp = np.interp(phi, v_angles, v_gain)
+    # Create the radial distance matrix using the interpolated gain values
+    R = np.outer(v_gain_interp, h_gain_interp)
+    # Adjust the radial distance based on power adjustment
+    R_adjusted = R - (power_adjustment - default_power)
+    max_gain = pattern.gain + (power_adjustment - default_power)
+    # Convert the spherical coordinates to Cartesian coordinates
+    X = (max_gain - R_adjusted) * np.sin(PHI) * np.cos(THETA)
+    Y = (max_gain - R_adjusted) * np.sin(PHI) * np.sin(THETA)
+    Z = (max_gain - R_adjusted) * np.cos(PHI)
+    # Create a structured grid in PyVista
+    grid = pv.StructuredGrid(X, Y, Z)
+    # Flatten the radial distance (attenuation) for color mapping
+    attenuation = (max_gain - R_adjusted).flatten(order="F")
+    grid["attenuation"] = attenuation
+    # Initialize the PyVista plotter
+    plotter = pv.Plotter()
+    # Add the mesh to the plotter
+    plotter.add_mesh(
+        grid,
+        scalars="attenuation",
+        cmap=[
+            "red",
+            "yellow",
+            "green",
+            "blue",
+        ],
+        show_scalar_bar=True,
+        smooth_shading=True,
+        show_edges=False,
+    )
+    # Customize the plotter view and appearance
+    plotter.background_color = "white"
+    plotter.view_isometric()
+    plotter.add_axes()
+    plotter.add_text("Antenna 3D Pattern", position="upper_left", color="black")
+    return plotter
+    return plotter
+
+
+# Info: Logaritmic Scale
+# @st.cache_resource
+# def create_3d_chart(
+#     pattern: AntennaPattern, power_adjustment: float, default_power: float
+# ) -> pv.Plotter:
+#     """Create a 3D antenna pattern chart using PyVista with logarithmic calculations and custom color array."""
+#     # Define the theta and phi angles in radians
+#     theta = np.radians(np.linspace(0, 360, 361))  # azimuth angle
+#     phi = np.radians(np.linspace(0, 180, 181))  # elevation angle
+#     # Create a meshgrid for the theta and phi angles
+#     THETA, PHI = np.meshgrid(theta, phi)
+
+#     # Convert the horizontal and vertical pattern data to radians and extract gain
+#     h_angles = np.radians(pattern.horizontal["angle"].values)
+#     h_gain = pattern.horizontal["Att dB"].values
+#     v_angles = np.radians(pattern.vertical["angle"].values)
+#     v_gain = pattern.vertical["Att dB"].values
+
+#     # Interpolate the gains across the theta and phi angles
+#     h_gain_interp = np.interp(theta, h_angles, h_gain, period=2 * np.pi)
+#     v_gain_interp = np.interp(phi, v_angles, v_gain)
+
+#     # Create the radial distance matrix using the interpolated gain values
+#     R = np.outer(v_gain_interp, h_gain_interp)
+
+#     # Adjust the radial distance based on power adjustment
+#     R_adjusted = R - (power_adjustment - default_power)
+#     max_gain = pattern.gain + (power_adjustment - default_power)
+
+#     # Apply logarithmic transformation
+#     R_log = 10 ** (-R_adjusted / 20)
+
+#     # Convert the spherical coordinates to Cartesian coordinates
+#     X = R_log * np.sin(PHI) * np.cos(THETA)
+#     Y = R_log * np.sin(PHI) * np.sin(THETA)
+#     Z = R_log * np.cos(PHI)
+
+#     # Create a structured grid in PyVista
+#     grid = pv.StructuredGrid(X, Y, Z)
+
+#     # Use R_adjusted for color mapping to maintain full scale
+#     attenuation = R_adjusted.flatten(order="F")
+#     grid["attenuation"] = attenuation
+
+#     # Create custom colormap
+#     colors = ["blue", "green", "yellow", "red"]
+#     n_bins = 100  # Number of color gradations
+#     custom_cmap = LinearSegmentedColormap.from_list("custom", colors, N=n_bins)
+
+#     # Initialize the PyVista plotter
+#     plotter = pv.Plotter()
+
+#     # Add the mesh to the plotter with custom colormap
+#     plotter.add_mesh(
+#         grid,
+#         scalars="attenuation",
+#         cmap=custom_cmap,
+#         clim=[
+#             attenuation.max(),
+#             attenuation.min(),
+#         ],  # Reversed to make blue max and red min
+#         show_scalar_bar=True,
+#         scalar_bar_args={"title": "Attenuation (dB)"},
+#         smooth_shading=True,
+#         show_edges=False,
+#     )
+
+#     # Customize the plotter view and appearance
+#     plotter.background_color = "white"
+#     plotter.view_isometric()
+#     plotter.add_axes()
+#     plotter.add_text(
+#         "Antenna 3D Pattern (Logarithmic)", position="upper_left", color="black"
+#     )
+#     return plotter
+
+
 def create_combined_polar_chart(patterns: list[AntennaPattern], name: str):
     """Create a combined polar chart for horizontal and vertical patterns."""
     fig, (ax1, ax2) = plt.subplots(
@@ -147,13 +283,9 @@ def create_combined_polar_chart(patterns: list[AntennaPattern], name: str):
 def main():
     st.set_page_config(page_title="Antenna Pattern", layout="wide", page_icon="🧊")
 
-    # Define the path to the fixed file
-    script_dir = os.path.dirname(__file__)
-    fixed_file_path = os.path.join(script_dir, "AIR6488.txt")
-
     # Load and cache the file content
     if "df" not in st.session_state:
-        st.session_state.df = decode_file_content(fixed_file_path)
+        st.session_state.df = decode_file_content("AIR6488.txt")
 
     if st.session_state.df is not None:
         if "Name" in st.session_state.df.columns:
@@ -202,9 +334,14 @@ def main():
                             "Tx Power (dBm)": f"{pattern.tx_power:.2f}",
                         }
                     )
-                param_df = pd.DataFrame(param_data)
 
-                # Display the antenna parameters table
+                # Display 3D Plot with Plotly
+                tx_power = patterns[
+                    0
+                ].tx_power  # Assuming the same tx_power for all patterns
+                fig = create_3d_chart(patterns[0], tx_power, 40)
+                stpyvista(fig)
+                param_df = pd.DataFrame(param_data)
                 st.table(param_df)
 
             else:

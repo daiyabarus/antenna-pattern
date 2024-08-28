@@ -543,8 +543,6 @@ def main():
 
                 power_adjustment_dbm = watts_to_dbm(power_adjustment_watts)
 
-                power_adjustment_dbm = watts_to_dbm(power_adjustment_watts)
-
                 if power_adjustment_dbm is not None:
                     power_diff = power_adjustment_dbm - default_power_dbm
                     adjusted_gain = float(selected_row["Gain (dBi)"]) + power_diff
