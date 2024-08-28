@@ -58,6 +58,8 @@ test2.py
 test3.py
 test*.*
 test/
+mimo.py
+mimo2.py
 # Translations
 *.mo
 *.pot

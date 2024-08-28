@@ -2,6 +2,7 @@ import os
 import re
 from dataclasses import dataclass
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,11 +11,6 @@ import streamlit as st
 from stpyvista import stpyvista
 
 from styles import styling
-
-# start_xvfb()
-# st.session_state.is_app_embedded = st.session_state.get(
-#     "is_app_embedded", is_the_app_embedded()
-# )
 
 
 @dataclass
@@ -34,6 +30,10 @@ class AntennaPattern:
 
     def __post_init__(self):
         self.wavelength = 3e8 / (self.frequency * 1e6)
+
+
+def watts_to_dbm(watts):
+    return 10 * np.log10(watts * 1000)
 
 
 def decode_file_content(file_path: str) -> pd.DataFrame | None:
@@ -63,17 +63,6 @@ def extract_pattern(pattern_text: str) -> tuple[str | None, str | None]:
     """Extract horizontal and vertical patterns from the pattern text."""
     matches = re.findall(r"(?<=360\s)(.*?\s+359\s+\d+\.\d+)", pattern_text)
     return (matches[0], matches[1]) if len(matches) >= 2 else (None, None)
-
-
-def extract_tx_power(comment: str) -> float:
-    """Extract transmission power from the comment string."""
-    power_match = re.search(r"Tx Power=(\d+)x(\d+)\s*dBm", comment)
-    if power_match:
-        num_channels = int(power_match.group(1))
-        power_per_channel = int(power_match.group(2))
-        total_power_dbm = 10 * np.log10(num_channels * (10 ** (power_per_channel / 10)))
-        return total_power_dbm
-    return 0
 
 
 def transpose_pattern(pattern_text: str) -> pd.DataFrame:
@@ -161,56 +150,125 @@ def create_3d_chart(
     return plotter
 
 
-def create_polar_chart(df: pd.DataFrame, color: str, max_gain: float) -> go.Figure:
-    """Create a polar chart using Plotly for the antenna pattern."""
+def create_polar_chart(df: pd.DataFrame, color: str, max_gain: float):
+    """Create a logarithmic polar chart using Matplotlib for the antenna pattern."""
     gain = -df["Att dB"]
     dBi_values = max_gain + gain
 
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatterpolar(
-            r=gain,
-            theta=df["angle"],
-            mode="lines",
-            name="Antenna Pattern",
-            line=dict(color=color, width=2),
-            hovertemplate="Angle: %{theta:.2f}°<br>Attenuation: %{r:.2f} dB<br>Gain: %{text:.2f} dBi<extra></extra>",
-            text=dBi_values,
+    normalized_gain = 10 ** (gain / max_gain)
+
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111, projection="polar")
+
+    ax.plot(np.radians(df["angle"]), normalized_gain, color=color, linewidth=2)
+
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+
+    ax.set_ylim(10 ** (-40 / 20), 1)
+    ax.set_yticks(
+        [1, 10 ** (-10 / 20), 10 ** (-20 / 20), 10 ** (-30 / 20), 10 ** (-40 / 20)]
+    )
+    ax.set_yticklabels(["0", "-10", "-20", "-30", "-40"])
+    ax.grid(True)
+
+    return fig
+
+
+def create_3d_chart_plotly_mimo(
+    pattern: AntennaPattern,
+    power_adjustment: float,
+    default_power: float,
+    tx_count=64,
+    rx_count=64,
+) -> go.Figure:
+    """Create a 3D antenna pattern chart for a 64x64 MIMO system using Plotly."""
+    theta = np.radians(np.linspace(0, 360, 361))
+    phi = np.radians(np.linspace(0, 180, 181))
+    THETA, PHI = np.meshgrid(theta, phi)
+
+    # Aggregate contributions from all Tx and Rx pairs
+    total_gain = np.zeros_like(THETA)
+
+    for tx in range(tx_count):
+        for rx in range(rx_count):
+            # Interpolating horizontal and vertical patterns
+            h_gain_interp = np.interp(
+                theta,
+                np.radians(pattern.horizontal["angle"].values),
+                pattern.horizontal["Att dB"].values,
+                period=2 * np.pi,
+            )
+            v_gain_interp = np.interp(
+                phi,
+                np.radians(pattern.vertical["angle"].values),
+                pattern.vertical["Att dB"].values,
+            )
+
+            R = np.outer(v_gain_interp, h_gain_interp)
+            total_gain += R
+
+    # Normalize the total_gain for proper visualization
+    total_gain /= tx_count * rx_count
+    R_adjusted = total_gain - (power_adjustment - default_power)
+    R_norm = (R_adjusted - R_adjusted.min()) / (R_adjusted.max() - R_adjusted.min())
+
+    max_gain = pattern.gain + (power_adjustment - default_power)
+    X = (max_gain - R_adjusted) * np.sin(PHI) * np.cos(THETA)
+    Y = (max_gain - R_adjusted) * np.sin(PHI) * np.sin(THETA)
+    Z = (max_gain - R_adjusted) * np.cos(PHI)
+
+    # Calculate dBi values
+    dBi_values = max_gain - R_adjusted
+
+    # Create a custom text for hover with conditional logic
+    hover_text = [
+        (
+            f"X: {x:.2f}<br>Y: {y:.2f}<br>Z: {z:.2f}<br>Gain: {d:.2f} dBi"
+            if d > 0
+            else f"X: {x:.2f}<br>Y: {y:.2f}<br>Z: {z:.2f}"
         )
+        for x, y, z, d in zip(X.flatten(), Y.flatten(), Z.flatten(), R_norm.flatten())
+    ]
+
+    hover_text = np.array(hover_text).reshape(X.shape)
+
+    fig = go.Figure(
+        data=[
+            go.Surface(
+                x=X,
+                y=Y,
+                z=Z,
+                surfacecolor=R_norm,
+                colorscale=[
+                    (0, "blue"),
+                    (0.35, "green"),
+                    (0.65, "yellow"),
+                    (1, "red"),
+                ],
+                showscale=False,
+                hoverinfo="text",
+                hovertext=hover_text,
+            )
+        ]
     )
 
     fig.update_layout(
-        polar=dict(
-            radialaxis=dict(
-                visible=True,
-                range=[gain.min() - 2, 0],
-                tickmode="array",
-                tickvals=np.arange(gain.min() - 2, 2, 2),
-                ticktext=[
-                    str(abs(int(val))) for val in np.arange(gain.min() - 2, 2, 2)
-                ],
-            ),
-            angularaxis=dict(
-                tickmode="array",
-                tickvals=[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330],
-                direction="clockwise",
-            ),
+        scene=dict(
+            aspectmode="data",
+            xaxis=dict(showgrid=False, showticklabels=False, title=""),
+            yaxis=dict(showgrid=False, showticklabels=False, title=""),
+            zaxis=dict(showgrid=False, showticklabels=False, title=""),
         ),
-        showlegend=False,
-        height=500,
-        width=500,
+        width=800,
+        height=800,
+        margin=dict(l=0, r=0, b=0, t=0),
     )
 
     return fig
 
 
 def main():
-    st.set_page_config(
-        page_title="Antenna Pattern",
-        layout="wide",
-        page_icon="🧊",
-    )
-
     # Define the path to the fixed file
     script_dir = os.path.dirname(__file__)
     fixed_file_path = os.path.join(script_dir, "AIR6488.txt")
@@ -249,19 +307,27 @@ def main():
                     **antenna_params,
                 )
 
-                default_power = extract_tx_power(selected_row["Comments"])
+                # Set default power to 100 watts
+                default_power_watts = 100.0
+                default_power_dbm = watts_to_dbm(default_power_watts)
 
-                power_adjustment = st.number_input(
-                    "Tx Power (dBm)",
-                    value=default_power,
+                power_adjustment_watts = st.number_input(
+                    "Tx Power (Watts)",
+                    value=float(default_power_watts),
+                    min_value=0.1,
+                    max_value=200.0,
                     step=0.1,
-                    key="power_adjustment",
+                    format="%.1f",
+                    key="power_adjustment_watts",
                 )
 
-                if power_adjustment is not None:
-                    power_diff = power_adjustment - default_power
+                power_adjustment_dbm = watts_to_dbm(power_adjustment_watts)
+
+                if power_adjustment_dbm is not None:
+                    power_diff = power_adjustment_dbm - default_power_dbm
                     adjusted_gain = float(selected_row["Gain (dBi)"]) + power_diff
 
+                    st.markdown("#")
                     col1, col2, col3 = st.columns(3)
                     st.markdown("#")
                     with col1:
@@ -274,11 +340,10 @@ def main():
                             )
                         )
                         fig_h = create_polar_chart(
-                            pattern.horizontal,
-                            "red",
-                            adjusted_gain,
+                            pattern.horizontal, "red", adjusted_gain
                         )
-                        st.plotly_chart(fig_h, use_container_width=True)
+
+                        st.pyplot(fig_h, use_container_width=True)
 
                     with col2:
                         st.markdown(
@@ -292,7 +357,7 @@ def main():
                         fig_v = create_polar_chart(
                             pattern.vertical, "green", adjusted_gain
                         )
-                        st.plotly_chart(fig_v, use_container_width=True)
+                        st.pyplot(fig_v, use_container_width=True)
 
                     with col3:
                         st.markdown(
@@ -308,7 +373,7 @@ def main():
                         |:---------------------------------|:-----------------------------------------------------------------|
                         | **Name**                         | {selected_row['Name']}                                           |
                         | **Gain**                         | {selected_row['Gain (dBi)']} dBi                                 |
-                        | **Tx Power**                     | {power_adjustment:.2f} dBm                                       |
+                        | **Tx Power**                     | {power_adjustment_watts:.2f} W ({power_adjustment_dbm:.2f} dBm)  |
                         | **Adjusted Gain**                | {adjusted_gain:.2f} dBi                                          |
                         | **Pattern Electrical Tilt**      | {selected_row['Pattern Electrical Tilt (°)']}°                   |
                         | **Half-power Beamwidth**         | {selected_row['Half-power Beamwidth']}°                          |
@@ -327,12 +392,21 @@ def main():
                             text_align="center",
                         )
                     )
-                    plotter = create_3d_chart(pattern, power_adjustment, default_power)
-                    # plotter.show()
-                    stpyvista(
-                        plotter,
-                        key=f"antenna_pattern_{selected_comment}_{default_power}",
-                    )
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        plotter = create_3d_chart(
+                            pattern, power_adjustment_dbm, default_power_dbm
+                        )
+                        stpyvista(
+                            plotter,
+                            key=f"antenna_pattern_{selected_comment}_{default_power_dbm}",
+                        )
+                    with col2:
+                        fig_3d = create_3d_chart_plotly_mimo(
+                            pattern, power_adjustment_dbm, default_power_dbm
+                        )
+                        st.plotly_chart(fig_3d, use_container_width=True)
+
             else:
                 st.error("Could not extract pattern data for the selected comment.")
         else:
@@ -342,4 +416,5 @@ def main():
 
 
 if __name__ == "__main__":
+    st.set_page_config(page_title="Antenna Pattern", layout="wide", page_icon="🧊")
     main()
