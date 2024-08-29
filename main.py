@@ -164,59 +164,6 @@ def create_3d_chart(
     return plotter
 
 
-def create_log_polar_chart(df: pd.DataFrame, color: str, max_gain: float) -> go.Figure:
-    """Create a polar chart using Plotly for the antenna pattern with extended gain visualization."""
-    gain = -df["Att dB"]
-    dBi_values = max_gain + gain
-
-    # Normalize gain values to range [0, 1]
-    normalized_gain = (gain - gain.min()) / (gain.max() - gain.min())
-
-    extended_gain = normalized_gain * 0.9 + 0.1
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatterpolar(
-            r=extended_gain,
-            theta=df["angle"],
-            mode="lines",
-            name="Antenna Pattern",
-            line=dict(color=color, width=2),
-            hovertemplate="Angle: %{theta:.2f}°<br>Gain: %{customdata:.2f} dBi<extra></extra>",
-            customdata=dBi_values,
-        )
-    )
-
-    gain_ticks = np.linspace(gain.min(), gain.max(), 5)
-    gain_tick_labels = [f"{(g + max_gain):.1f}" for g in gain_ticks]
-
-    fig.update_layout(
-        polar=dict(
-            radialaxis=dict(
-                visible=True,
-                range=[0, 1],
-                tickmode="array",
-                tickvals=np.linspace(0.1, 1, 5),
-                ticktext=gain_tick_labels,
-                tickfont=dict(size=10),
-                title="Gain (dBi)",
-                titlefont=dict(size=12),
-            ),
-            angularaxis=dict(
-                tickmode="array",
-                tickvals=np.arange(0, 361, 30),
-                tickfont=dict(size=10),
-                direction="clockwise",
-            ),
-        ),
-        showlegend=False,
-        height=500,
-        width=500,
-    )
-
-    return fig
-
-
 def create_polar_chart(df: pd.DataFrame, color: str, max_gain: float) -> go.Figure:
     """Create a polar chart using Plotly for the antenna pattern."""
     gain = -df["Att dB"]
@@ -263,62 +210,56 @@ def create_polar_chart(df: pd.DataFrame, color: str, max_gain: float) -> go.Figu
 def create_3d_chart_plotly(
     pattern: AntennaPattern, power_adjustment: float, default_power: float
 ) -> go.Figure:
-    theta = np.radians(np.linspace(0, 360, 361))
-    phi = np.radians(np.linspace(0, 180, 181))
+    # Define theta and phi as radians
+    theta = np.radians(np.linspace(0, 361, 720))  # Increase resolution
+    phi = np.radians(np.linspace(0, 180, 360))  # Increase resolution
+    st.write(theta)
+    st.write(phi)
+    # Meshgrid for 3D plot
     THETA, PHI = np.meshgrid(theta, phi)
 
+    # Interpolating horizontal and vertical patterns
     h_angles = np.radians(pattern.horizontal["angle"].values)
-    h_gain = pattern.horizontal["Att dB"].values
+    # st.write("hangel", h_angles)
+    h_gain = -pattern.horizontal["Att dB"].values  # Convert attenuation to gain
+    # st.write("hgain", h_gain)
     v_angles = np.radians(pattern.vertical["angle"].values)
-    v_gain = pattern.vertical["Att dB"].values
-
+    # st.write("vangel", v_angles)
+    v_gain = -pattern.vertical["Att dB"].values  # Convert attenuation to gain
+    # st.write("vgain", v_gain)
+    # Interpolate gains to match the meshgrid
     h_gain_interp = np.interp(theta, h_angles, h_gain, period=2 * np.pi)
+    # st.write(h_gain_interp)
     v_gain_interp = np.interp(phi, v_angles, v_gain)
-
+    # st.write(h_gain_interp)
+    # Combine horizontal and vertical gains
     R = np.outer(v_gain_interp, h_gain_interp)
-    R_adjusted = R - (power_adjustment - default_power)
-    R_norm = (R_adjusted - R_adjusted.min()) / (R_adjusted.max() - R_adjusted.min())
 
+    # Adjust for power
+    R_adjusted = R + (power_adjustment - default_power)
     max_gain = pattern.gain + (power_adjustment - default_power)
-    X = (max_gain - R_adjusted) * np.sin(PHI) * np.cos(THETA)
-    Y = (max_gain - R_adjusted) * np.sin(PHI) * np.sin(THETA)
-    Z = (max_gain - R_adjusted) * np.cos(PHI)
 
-    # Calculate dBi values
-    dBi_values = max_gain - R_adjusted
+    # Convert spherical to Cartesian coordinates for 3D plot
+    X = R_adjusted * np.sin(PHI) * np.cos(THETA)
+    Y = R_adjusted * np.sin(PHI) * np.sin(THETA)
+    Z = R_adjusted * np.cos(PHI)
 
-    # Create a custom text for hover with conditional logic
-    hover_text = [
-        (
-            f"X: {x:.2f}<br>Y: {y:.2f}<br>Z: {z:.2f}<br>Gain: {d:.2f} dBi"
-            if d > 0
-            else f"X: {x:.2f}<br>Y: {y:.2f}<br>Z: {z:.2f}"
-        )
-        for x, y, z, d in zip(X.flatten(), Y.flatten(), Z.flatten(), R_norm.flatten())
-    ]
-
-    hover_text = np.array(hover_text).reshape(X.shape)
-
+    # Create the 3D surface plot using Plotly
     fig = go.Figure(
         data=[
             go.Surface(
                 x=X,
                 y=Y,
                 z=Z,
-                surfacecolor=R_norm,
-                colorscale=[
-                    (0, "blue"),
-                    (0.35, "green"),
-                    (0.65, "yellow"),
-                    (1, "red"),
-                ],
-                showscale=False,
-                hoverinfo="text",
-                hovertext=hover_text,
+                surfacecolor=R_adjusted,
+                colorscale="Viridis",  # Better visual scale
+                showscale=True,
+                colorbar=dict(title="Gain (dBi)"),
             )
         ]
     )
 
+    # Update layout for better visualization
     fig.update_layout(
         scene=dict(
             aspectmode="data",
@@ -334,145 +275,43 @@ def create_3d_chart_plotly(
     return fig
 
 
-def create_3d_chart_mimo(
-    pattern: AntennaPattern,
-    power_adjustment: float,
-    default_power: float,
-    tx_count=64,
-    rx_count=64,
-):
-    """Create a 3D antenna pattern chart for a 64x64 MIMO system using PyVista."""
-    theta = np.radians(np.linspace(0, 360, 361))
-    phi = np.radians(np.linspace(0, 180, 181))
-    THETA, PHI = np.meshgrid(theta, phi)
-
-    # Aggregate contributions from all Tx and Rx pairs
-    total_gain = np.zeros_like(THETA)
-
-    for tx in range(tx_count):
-        for rx in range(rx_count):
-            # Interpolating horizontal and vertical patterns
-            h_gain_interp = np.interp(
-                theta,
-                np.radians(pattern.horizontal["angle"].values),
-                pattern.horizontal["Att dB"].values,
-                period=2 * np.pi,
-            )
-            v_gain_interp = np.interp(
-                phi,
-                np.radians(pattern.vertical["angle"].values),
-                pattern.vertical["Att dB"].values,
-            )
-
-            R = np.outer(v_gain_interp, h_gain_interp)
-            total_gain += R
-
-    # Normalize the total_gain for proper visualization
-    total_gain /= tx_count * rx_count
-    R_adjusted = total_gain - (power_adjustment - default_power)
-    max_gain = pattern.gain + (power_adjustment - default_power)
-
-    X = (max_gain - R_adjusted) * np.sin(PHI) * np.cos(THETA)
-    Y = (max_gain - R_adjusted) * np.sin(PHI) * np.sin(THETA)
-    Z = (max_gain - R_adjusted) * np.cos(PHI)
-
-    grid = pv.StructuredGrid(X, Y, Z)
-    attenuation = (max_gain - R_adjusted).flatten(order="F")
-    grid["attenuation"] = attenuation
-
-    plotter = pv.Plotter()
-    plotter.add_mesh(
-        grid,
-        scalars="attenuation",
-        cmap=["red", "yellow", "green", "blue"],
-        show_scalar_bar=True,
-        smooth_shading=True,
-        show_edges=False,
-    )
-
-    plotter.background_color = "white"
-    plotter.view_isometric()
-    return plotter
-
-
-def create_3d_chart_plotly_mimo(
-    pattern: AntennaPattern,
-    power_adjustment: float,
-    default_power: float,
-    tx_count=64,
-    rx_count=64,
+def create_3d_chart_polar(
+    df_horizontal: pd.DataFrame, df_vertical: pd.DataFrame, color: str, max_gain: float
 ) -> go.Figure:
-    """Create a 3D antenna pattern chart for a 64x64 MIMO system using Plotly."""
-    theta = np.radians(np.linspace(0, 360, 361))
-    phi = np.radians(np.linspace(0, 180, 181))
+    """Create a 3D antenna pattern chart from horizontal and vertical polar data using Plotly."""
+    # Convert angles to radians for spherical to Cartesian transformation
+    theta = np.radians(df_horizontal["angle"].values)  # Horizontal angles (azimuth)
+    phi = np.radians(df_vertical["angle"].values)  # Vertical angles (elevation)
+
+    # Calculate the gain (in dB) from the attenuation
+    h_gain = max_gain - df_horizontal["Att dB"].values
+    v_gain = max_gain - df_vertical["Att dB"].values
+
+    # Interpolating the gains for each angle pair
     THETA, PHI = np.meshgrid(theta, phi)
+    R = np.outer(v_gain, h_gain)  # Combine gains
 
-    # Aggregate contributions from all Tx and Rx pairs
-    total_gain = np.zeros_like(THETA)
+    # Spherical to Cartesian transformation
+    X = R * np.sin(PHI) * np.cos(THETA)
+    Y = R * np.sin(PHI) * np.sin(THETA)
+    Z = R * np.cos(PHI)
 
-    for tx in range(tx_count):
-        for rx in range(rx_count):
-            # Interpolating horizontal and vertical patterns
-            h_gain_interp = np.interp(
-                theta,
-                np.radians(pattern.horizontal["angle"].values),
-                pattern.horizontal["Att dB"].values,
-                period=2 * np.pi,
-            )
-            v_gain_interp = np.interp(
-                phi,
-                np.radians(pattern.vertical["angle"].values),
-                pattern.vertical["Att dB"].values,
-            )
-
-            R = np.outer(v_gain_interp, h_gain_interp)
-            total_gain += R
-
-    # Normalize the total_gain for proper visualization
-    total_gain /= tx_count * rx_count
-    R_adjusted = total_gain - (power_adjustment - default_power)
-    R_norm = (R_adjusted - R_adjusted.min()) / (R_adjusted.max() - R_adjusted.min())
-
-    max_gain = pattern.gain + (power_adjustment - default_power)
-    X = (max_gain - R_adjusted) * np.sin(PHI) * np.cos(THETA)
-    Y = (max_gain - R_adjusted) * np.sin(PHI) * np.sin(THETA)
-    Z = (max_gain - R_adjusted) * np.cos(PHI)
-
-    # Calculate dBi values
-    dBi_values = max_gain - R_adjusted
-
-    # Create a custom text for hover with conditional logic
-    hover_text = [
-        (
-            f"X: {x:.2f}<br>Y: {y:.2f}<br>Z: {z:.2f}<br>Gain: {d:.2f} dBi"
-            if d > 0
-            else f"X: {x:.2f}<br>Y: {y:.2f}<br>Z: {z:.2f}"
-        )
-        for x, y, z, d in zip(X.flatten(), Y.flatten(), Z.flatten(), R_norm.flatten())
-    ]
-
-    hover_text = np.array(hover_text).reshape(X.shape)
-
+    # Create the 3D surface plot using Plotly
     fig = go.Figure(
         data=[
             go.Surface(
                 x=X,
                 y=Y,
                 z=Z,
-                surfacecolor=R_norm,
-                colorscale=[
-                    (0, "blue"),
-                    (0.35, "green"),
-                    (0.65, "yellow"),
-                    (1, "red"),
-                ],
-                showscale=False,
-                hoverinfo="text",
-                hovertext=hover_text,
+                surfacecolor=R,
+                colorscale="Viridis",
+                showscale=True,
+                colorbar=dict(title="Gain (dBi)"),
             )
         ]
     )
 
+    # Update layout for better visualization
     fig.update_layout(
         scene=dict(
             aspectmode="data",
@@ -480,6 +319,7 @@ def create_3d_chart_plotly_mimo(
             yaxis=dict(showgrid=False, showticklabels=False, title=""),
             zaxis=dict(showgrid=False, showticklabels=False, title=""),
         ),
+        title="3D Antenna Radiation Pattern",
         width=800,
         height=800,
         margin=dict(l=0, r=0, b=0, t=0),
@@ -563,10 +403,6 @@ def main():
                             pattern.horizontal, "red", adjusted_gain
                         )
                         st.plotly_chart(fig_h, use_container_width=True)
-                        fig_h_loga = create_log_polar_chart(
-                            pattern.horizontal, "red", adjusted_gain
-                        )
-                        st.plotly_chart(fig_h_loga, use_container_width=True)
 
                     with col2:
                         st.markdown(
@@ -581,10 +417,6 @@ def main():
                             pattern.vertical, "green", adjusted_gain
                         )
                         st.plotly_chart(fig_v, use_container_width=True)
-                        fig_v_loga = create_log_polar_chart(
-                            pattern.vertical, "green", adjusted_gain
-                        )
-                        st.plotly_chart(fig_v_loga, use_container_width=True)
 
                     with col3:
                         st.markdown(
@@ -621,7 +453,7 @@ def main():
                     )
                     col1, col2 = st.columns(2)
                     with col1:
-                        plotter = create_3d_chart_mimo(
+                        plotter = create_3d_chart(
                             pattern, power_adjustment_dbm, default_power_dbm
                         )
                         stpyvista(
@@ -629,7 +461,7 @@ def main():
                             key=f"antenna_pattern_{selected_comment}_{default_power_dbm}",
                         )
                     with col2:
-                        fig_3d = create_3d_chart_plotly_mimo(
+                        fig_3d = create_3d_chart_plotly(
                             pattern, power_adjustment_dbm, default_power_dbm
                         )
                         st.plotly_chart(fig_3d, use_container_width=True)
