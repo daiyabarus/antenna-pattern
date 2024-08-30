@@ -4,30 +4,30 @@ import numpy as np
 
 class Plot3DParams:
     def __init__(self):
-        # General stuff
+        # General parameters
         self.dB_Lim = 40
-        self.ra = 1.1  # length of normalized x/y/z-axis vector
-        self.cbo = 0  # colorbar on ?
-        self.View = [50, 30]  # view [el,az] angles
-        self.ScaleColors = 1  # scale colors for uniformity across |E|, P, dB?
+        self.ra = 1.1  # Length of normalized x/y/z-axis vector
+        self.cbo = 0  # Colorbar on?
+        self.View = [50, 30]  # View [elevation, azimuth] angles
+        self.ScaleColors = True  # Scale colors for uniformity across |E|, P, dB?
 
-        # Spherical-coord-system params
+        # Spherical coordinate system parameters
         self.Sph = {
-            "xyz": 1,  # plot xyz axes ?
-            "Sphere": 0.2,  # plot Sphere ? 0=No, >0: Boldness (0.1=Barely Vis)
-            "Circles": 1,  # plot cut-circles ?
+            "xyz": True,  # Plot xyz axes?
+            "Sphere": 0.2,  # Plot Sphere? 0=No, >0: Boldness (0.1=Barely Visible)
+            "Circles": True,  # Plot cut-circles?
         }
 
-        # Cylindrical-coord-system params
+        # Cylindrical coordinate system parameters
         self.Cyl = {
             "Flat_or_Surf": 2,  # 1=flat (pcolor-like), 2=surf
-            "Circles_degStep": 15,  # deg-step for concentric-circles
-            "Rays_degStep": 30,  # deg-step for radial-rays
-            "Circles": {"Annotate": 1},  # annotate theta=90 ?
-            "Rays": {"Annotate": 1},  # annotate phi=0 ?
-            "xyz": 1,  # plot xy axes ?
-            "CapSideWalls": 1,  # plot "cap" and "SWs" of cylinder ?
-            "gridCol": 0.2 * np.array([1, 1, 1]),  # cyl-grid line-color
+            "Circles_degStep": 15,  # Degree step for concentric circles
+            "Rays_degStep": 30,  # Degree step for radial rays
+            "Circles": {"Annotate": True},  # Annotate theta=90?
+            "Rays": {"Annotate": True},  # Annotate phi=0?
+            "xyz": True,  # Plot xy axes?
+            "CapSideWalls": True,  # Plot "cap" and "side walls" of cylinder?
+            "gridCol": 0.2 * np.array([1, 1, 1]),  # Cylinder grid line color
         }
 
 
@@ -37,21 +37,19 @@ plot3Dparams = Plot3DParams()
 def plot_3D_Cylindrical(t, p, r, PT):
     gridCol = plot3Dparams.Cyl["gridCol"]
 
-    # Preps
-    ro = r.copy()  # store originally supplied r (needed for color-scaling)
-    if (PT - 3) == 3:  # Check for dB and rescale in [0,1], so that it's plottable:
+    # Prepare data
+    ro = r.copy()  # Store originally supplied r (needed for color-scaling)
+    if (PT - 3) == 3:  # Check for dB and rescale in [0,1] for plotting
         R = plot3Dparams.dB_Lim
         r = (np.maximum(r, -R) + R) / R
 
-    # Convert from cylindrical (t, p, r) to cartesian (x, y, z) coordinates:
-    rhoc = t  # [theta]
-    phic = p  # [phi]
-    x = rhoc * np.cos(np.radians(phic))
-    y = rhoc * np.sin(np.radians(phic))
+    # Convert from cylindrical (t, p, r) to Cartesian (x, y, z) coordinates
+    x = t * np.cos(np.radians(p))
+    y = t * np.sin(np.radians(p))
     z = r
 
-    # If color-scaling was requested
-    if plot3Dparams.ScaleColors == 1 and plot3Dparams.Cyl["Flat_or_Surf"] == 2:  # Surf
+    # Color scaling based on parameters
+    if plot3Dparams.ScaleColors and plot3Dparams.Cyl["Flat_or_Surf"] == 2:  # Surf
         if (PT - 3) == 3:  # dB
             col_scale = 10.0 ** (ro / 10)
         elif (PT - 3) == 1:  # |E|
@@ -61,9 +59,9 @@ def plot_3D_Cylindrical(t, p, r, PT):
     else:  # Unscaled or Flat
         col_scale = r
 
-    FlatOut = plot3Dparams.Cyl["Flat_or_Surf"] == 1  # If Flat, this is ==1
+    FlatOut = plot3Dparams.Cyl["Flat_or_Surf"] == 1  # If Flat, this is True
 
-    # >>>> Plot using SURFACE function <<<<
+    # Plot using SURFACE function
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
     ax.plot_surface(
@@ -74,7 +72,7 @@ def plot_3D_Cylindrical(t, p, r, PT):
     ax.set_ylabel(r"$\theta \sin(\phi)$")
     ax.set_zlabel("Z")
 
-    # Set plot-viewing angle
+    # Set plot viewing angle
     if plot3Dparams.Cyl["Flat_or_Surf"] == 2:
         ax.view_init(elev=plot3Dparams.View[0], azim=plot3Dparams.View[1])
     else:
