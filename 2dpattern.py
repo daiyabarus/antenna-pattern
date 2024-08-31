@@ -3,10 +3,15 @@ import numpy as np
 
 
 def plot_2D_Pattern_polar_dB(
-    angdeg, rdB, rangedB=(-30, 10), stepdB=10, stepdeg=30, noLeg=False
-):
+    angdeg: np.ndarray,
+    rdB: np.ndarray,
+    rangedB: tuple[int, int] = (-30, 10),
+    stepdB: int = 10,
+    stepdeg: int = 30,
+    noLeg: bool = False,
+) -> None:
     """
-    Plots 2D polar plot of angle-vs-r in logarithmic scale (for r).
+    Plots a 2D polar plot of angle-vs-r in logarithmic scale (for r).
 
     Parameters
     ----------

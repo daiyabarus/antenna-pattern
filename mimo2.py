@@ -159,7 +159,7 @@ def create_3d_chart(
     plotter.add_axes()
     plotter.add_text("Antenna 3D Pattern", position="upper_left", color="black")
     return plotter
-    return plotter
+
 
 
 # Info: Logaritmic Scale

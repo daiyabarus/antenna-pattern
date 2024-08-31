@@ -208,58 +208,93 @@ def create_polar_chart(df: pd.DataFrame, color: str, max_gain: float) -> go.Figu
 
 
 def create_3d_chart_plotly(
-    pattern: AntennaPattern, power_adjustment: float, default_power: float
+    patterns: AntennaPattern | list[AntennaPattern],
+    power_adjustment: float,
+    default_power: float,
+    array_config: dict = {"rows": 1, "columns": 1, "spacing": 0.5},
 ) -> go.Figure:
+    """
+    Create a 3D chart of the antenna pattern using Plotly.
+
+    :param patterns: AntennaPattern object or list of AntennaPattern objects
+    :param power_adjustment: Power adjustment in dBm
+    :param default_power: Default power in dBm
+    :param array_config: Dictionary containing array configuration
+    :return: Plotly Figure object
+    """
+    # Ensure patterns is a list
+    if isinstance(patterns, AntennaPattern):
+        patterns = [patterns]
+
     # Define theta and phi as radians
-    theta = np.radians(np.linspace(0, 361, 720))  # Increase resolution
-    phi = np.radians(np.linspace(0, 180, 360))  # Increase resolution
-    st.write(theta)
-    st.write(phi)
-    # Meshgrid for 3D plot
+    theta = np.radians(np.linspace(0, 360, 361))
+    phi = np.radians(np.linspace(0, 180, 181))
     THETA, PHI = np.meshgrid(theta, phi)
 
-    # Interpolating horizontal and vertical patterns
-    h_angles = np.radians(pattern.horizontal["angle"].values)
-    # st.write("hangel", h_angles)
-    h_gain = -pattern.horizontal["Att dB"].values  # Convert attenuation to gain
-    # st.write("hgain", h_gain)
-    v_angles = np.radians(pattern.vertical["angle"].values)
-    # st.write("vangel", v_angles)
-    v_gain = -pattern.vertical["Att dB"].values  # Convert attenuation to gain
-    # st.write("vgain", v_gain)
-    # Interpolate gains to match the meshgrid
-    h_gain_interp = np.interp(theta, h_angles, h_gain, period=2 * np.pi)
-    # st.write(h_gain_interp)
-    v_gain_interp = np.interp(phi, v_angles, v_gain)
-    # st.write(h_gain_interp)
-    # Combine horizontal and vertical gains
-    R = np.outer(v_gain_interp, h_gain_interp)
+    # Initialize array factor
+    array_factor = np.zeros_like(THETA, dtype=complex)
+
+    # Calculate array factor
+    for i, pattern in enumerate(patterns):
+        # Calculate element position
+        row = i // array_config["columns"]
+        col = i % array_config["columns"]
+        x_pos = (col - (array_config["columns"] - 1) / 2) * array_config["spacing"]
+        y_pos = (row - (array_config["rows"] - 1) / 2) * array_config["spacing"]
+
+        # Interpolate gains
+        h_angles = np.radians(pattern.horizontal["angle"].values)
+        h_gain = -pattern.horizontal["Att dB"].values
+        v_angles = np.radians(pattern.vertical["angle"].values)
+        v_gain = -pattern.vertical["Att dB"].values
+
+        h_gain_interp = np.interp(theta, h_angles, h_gain, period=2 * np.pi)
+        v_gain_interp = np.interp(phi, v_angles, v_gain)
+
+        # Combine gains and convert to linear scale
+        element_gain = np.outer(v_gain_interp, h_gain_interp)
+        element_gain_linear = 10 ** (element_gain / 20)
+
+        # Calculate phase shift due to element position
+        phase_shift = (
+            2
+            * np.pi
+            * (
+                x_pos * np.sin(PHI) * np.cos(THETA)
+                + y_pos * np.sin(PHI) * np.sin(THETA)
+            )
+        )
+
+        # Add element contribution to array factor
+        array_factor += element_gain_linear * np.exp(1j * phase_shift)
+
+    # Calculate total pattern
+    total_pattern = 20 * np.log10(np.abs(array_factor))
 
     # Adjust for power
-    R_adjusted = R + (power_adjustment - default_power)
-    max_gain = pattern.gain + (power_adjustment - default_power)
+    total_pattern_adjusted = total_pattern + power_adjustment - default_power
 
-    # Convert spherical to Cartesian coordinates for 3D plot
-    X = R_adjusted * np.sin(PHI) * np.cos(THETA)
-    Y = R_adjusted * np.sin(PHI) * np.sin(THETA)
-    Z = R_adjusted * np.cos(PHI)
+    # Convert to Cartesian coordinates
+    X = total_pattern_adjusted * np.sin(PHI) * np.cos(THETA)
+    Y = total_pattern_adjusted * np.sin(PHI) * np.sin(THETA)
+    Z = total_pattern_adjusted * np.cos(PHI)
 
-    # Create the 3D surface plot using Plotly
+    # Create the 3D surface plot
     fig = go.Figure(
         data=[
             go.Surface(
                 x=X,
                 y=Y,
                 z=Z,
-                surfacecolor=R_adjusted,
-                colorscale="Viridis",  # Better visual scale
+                surfacecolor=total_pattern_adjusted,
+                colorscale="Viridis",
                 showscale=True,
                 colorbar=dict(title="Gain (dBi)"),
             )
         ]
     )
 
-    # Update layout for better visualization
+    # Update layout
     fig.update_layout(
         scene=dict(
             aspectmode="data",
@@ -270,6 +305,7 @@ def create_3d_chart_plotly(
         width=800,
         height=800,
         margin=dict(l=0, r=0, b=0, t=0),
+        title="3D Antenna Radiation Pattern",
     )
 
     return fig
@@ -332,6 +368,7 @@ def main():
     # Define the path to the fixed file
     script_dir = os.path.dirname(__file__)
     fixed_file_path = os.path.join(script_dir, "AIR6488.txt")
+    # in wavelengths
 
     # Load and cache the file content
     if "df" not in st.session_state:
@@ -441,7 +478,7 @@ def main():
                         | **Remark**                       | {selected_row['Comments']}                                       |
                         """
                         st.markdown(table_data)
-
+                    array_config = {"rows": 4, "columns": 8, "spacing": 0.5}
                     st.markdown("#")
                     st.markdown(
                         *styling(
@@ -462,11 +499,17 @@ def main():
                         )
                     with col2:
                         fig_3d = create_3d_chart_plotly(
-                            pattern, power_adjustment_dbm, default_power_dbm
+                            pattern,
+                            power_adjustment_dbm,
+                            default_power_dbm,
+                            array_config,
                         )
                         st.plotly_chart(fig_3d, use_container_width=True)
                         fig_3d = create_3d_chart_plotly(
-                            pattern, power_adjustment_dbm, default_power_dbm
+                            pattern,
+                            power_adjustment_dbm,
+                            default_power_dbm,
+                            array_config,
                         )
                         st.plotly_chart(fig_3d, use_container_width=True)
             else:
