@@ -110,21 +110,31 @@ def main():
 
             # Convert elevation angles to theta
             theta = 90 - np.array(Vertical["Elevation"])
-            st.write("theta", theta)
+            # st.write("theta", theta)
             phi = np.array(Horizontal["Azimuth"])
-            st.write("phi", phi)
+            # st.write("phi", phi)
 
             # Ensure we have the correct number of points (73 points as in the example)
             theta_interp = np.linspace(min(theta), max(theta), 73)
-            st.write("theta_interp", theta_interp)
+            # st.write("theta_interp", theta_interp)
             phi_interp = np.linspace(min(phi), max(phi), 73)
-            st.write("phi_interp", phi_interp)
+            # st.write("phi_interp", phi_interp)
             # Interpolate the slices to match the number of points
             vert_slice_interp = np.interp(theta_interp, theta, Vertical["Magnitude"])
-            st.write(vert_slice_interp)
+            # st.write(vert_slice_interp)
             horiz_slice_interp = np.interp(phi_interp, phi, Horizontal["Magnitude"])
-            st.write(horiz_slice_interp)
+            # st.write(horiz_slice_interp)
+            # Debug statements in main function
+            st.write("Vertical Elevation", Vertical["Elevation"])
+            st.write("Vertical Magnitude", Vertical["Magnitude"])
+            st.write("Horizontal Azimuth", Horizontal["Azimuth"])
+            st.write("Horizontal Magnitude", Horizontal["Magnitude"])
 
+            # Interpolation Debug
+            st.write("Interpolated Theta", theta_interp)
+            st.write("Interpolated Phi", phi_interp)
+            st.write("Interpolated Vertical Slice", vert_slice_interp)
+            st.write("Interpolated Horizontal Slice", horiz_slice_interp)
             # Generate 3D pattern using pattern_from_slices
             pattern_3d, theta_out, phi_out = pattern_from_slices(
                 vert_slice=vert_slice_interp,
@@ -133,6 +143,8 @@ def main():
                 phi=phi_interp,
                 method="Summing",
             )
+            st.write("Pattern 3D Shape", pattern_3d.shape)
+            st.write("Pattern 3D Min/Max", np.min(pattern_3d), np.max(pattern_3d))
 
             # Create and display 3D pattern
             pattern_3d_fig = create_3d_pattern(pattern_3d, theta_out, phi_out)

@@ -121,11 +121,49 @@ def check_repeated_points(vals: np.ndarray, angles: np.ndarray, az_or_el: str) -
                     )
 
 
+def wrap_to_alpha(x: float | np.ndarray, alpha: float) -> float | np.ndarray:
+    """
+    Helper function to wrap angles to the range (alpha-360, alpha].
+
+    Args:
+        x (float | np.ndarray): Angle(s) to wrap
+        alpha (float): Reference angle
+
+    Returns:
+        float | np.ndarray: Wrapped angle(s)
+    """
+    return x - 360 * np.ceil((x - alpha) / 360)
+
 def find_angle_closest_to_bs(angles: np.ndarray, angle_bs: float) -> tuple[float, int]:
-    """Find angle with minimum deviation from boresight angle"""
-    wrapped_angles = np.mod(angles - (angle_bs + 180), 360) + (angle_bs + 180)
-    idx = np.argmin(np.abs(wrapped_angles - angle_bs))
-    return np.abs(wrapped_angles[idx] - angle_bs), idx
+    """
+    Find the angle with minimum deviation from provided boresight angle.
+
+    Args:
+        angles (np.ndarray): Array of angles to search through
+        angle_bs (float): Boresight angle reference
+
+    Returns:
+        tuple[float, int]: A tuple containing:
+            - minimum absolute deviation from boresight angle
+            - index of the angle with minimum deviation
+    """
+    # Center the interval (alpha-360, alpha] around angle_bs
+    wrapped_angles = wrap_to_alpha(angles, angle_bs + 180)
+
+    # Find minimum deviation and its index
+    abs_deviations = np.abs(wrapped_angles - angle_bs)
+    min_deviation = np.min(abs_deviations)
+    min_idx = np.argmin(abs_deviations)
+
+    return min_deviation, min_idx
+
+# def find_angle_closest_to_bs(angles: np.ndarray, angle_bs: float) -> tuple[float, int]:
+#     """Find angle with minimum deviation from boresight angle"""
+#     # Simplify by directly calculating deviation from boresight
+#     deviations = np.abs(angles - angle_bs)
+#     idx = np.argmin(deviations)
+#     min_deviation = deviations[idx]
+#     return min_deviation, idx
 
 
 def check_reconstruction_requirements(
